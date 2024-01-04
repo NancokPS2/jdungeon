@@ -399,6 +399,11 @@ func _use_skill_at_position(global_point: Vector2, skill_class: String = get_ski
 			stats_component.energy_recovery(
 				skill_usage_Info.user.get_name(), -skill_used.energy_usage
 			)
+			
+			var sound_targets: Array[Node] = skill_usage_Info.targets.duplicate()
+			sound_targets.append(skill_usage_Info.user)
+			
+			_play_skill_sfx(skill_used, skill_usage_Info.user, sound_targets)
 
 		# Emit success signal
 		skill_successful_usage.emit(skill_used)
@@ -415,6 +420,18 @@ func _use_skill_at_position(global_point: Vector2, skill_class: String = get_ski
 	# Cast_on_select skills should never stay selected.
 	if skill_used.cast_on_select:
 		_deselect_skill()
+
+
+func _play_skill_sfx(skill_res: SkillComponentResource, user:Node, targets: Array[Node]):
+	for node: Node in targets:
+		if node.get("peer_id") != null:
+			SoundManager.main_instance.sync_play_on_client(
+				node.peer_id,
+				skill_res.sfx_stream_class, 
+				SoundManager.CHANNEL_TYPE.POSITIONAL_2D,
+				SoundManager.new_settings().set_custom_parent(user).set_position_2d_local(Vector2.ZERO).set_volume(10).to_json())
+		elif Global.debug_mode:
+			GodotLogger.warn("Target node '{0}' has no 'peer_id' property, cannot sync sound.".format([node.get_name()]))
 
 
 # Get the target that are situated under the current skill

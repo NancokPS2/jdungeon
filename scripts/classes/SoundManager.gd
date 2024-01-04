@@ -28,7 +28,7 @@ const Streams: Dictionary = {
 	"StoneMove" : "res://assets/audio/stone_door.ogg",
 }
 
-enum CHANNEL_TYPE { MONO, POSITIONAL_2D, POSITIONAL_3D }
+enum CHANNEL_TYPE { MONO, POSITIONAL_2D}
 
 ## All AudioStreamPlayer nodes will be added as children of this node
 @export var player_parent: Node
@@ -44,8 +44,6 @@ static var main_instance: SoundManager
 var channels_mono: Array[AudioStreamPlayer]
 ## For internal use, holds AudioStreamPlayers2D
 var channels_2D: Array[AudioStreamPlayer2D]
-## For internal use, holds AudioStreamPlayers3D
-var channels_3D: Array[AudioStreamPlayer3D]
 
 ## Internal. Holds AudioStreams as a String:AudioStream pair.
 ## Set by [method set_registered_stream] and retrieved by [method get_registered_stream]
@@ -67,6 +65,7 @@ func _ready() -> void:
 
 
 func play_sound_by_class(stream_class: String, type: CHANNEL_TYPE, settings: StreamPlayerSettings):
+	assert(get_registered_stream(stream_class) != null)
 	play_sound(get_registered_stream(stream_class), type, settings)
 
 
@@ -81,9 +80,6 @@ func play_sound(
 
 		CHANNEL_TYPE.POSITIONAL_2D:
 			return play_sound_pos_2d(stream, settings)
-
-		CHANNEL_TYPE.POSITIONAL_3D:
-			return play_sound_pos_3d(stream, settings)
 
 	return null
 
@@ -109,15 +105,6 @@ func add_channel(type: CHANNEL_TYPE) -> Node:
 			channels_2D.append(player)
 			return player
 
-		CHANNEL_TYPE.POSITIONAL_3D:
-			if channels_3D.size() >= max_channels:
-				GodotLogger.warn("Could not add more 3D channels, limit reached.")
-				return null
-
-			var player := AudioStreamPlayer3D.new()
-			channels_3D.append(player)
-			return player
-
 	return null
 
 
@@ -127,8 +114,6 @@ func remove_channel(player: Node):
 		channels_mono.erase(player)
 	elif player is AudioStreamPlayer2D:
 		channels_2D.erase(player)
-	elif player is AudioStreamPlayer3D:
-		channels_3D.erase(player)
 
 
 ## Removes all AudioStreamPlayers that are not currently playing anything or are simply invalid.
@@ -139,15 +124,22 @@ func clear_unused_channels():
 
 	channels_mono.assign(channels_mono.filter(keepPlayingPlayersFilter))
 	channels_2D.assign(channels_2D.filter(keepPlayingPlayersFilter))
-	channels_3D.assign(channels_3D.filter(keepPlayingPlayersFilter))
 
 
-func add_player_to_tree(player: Node):
-	#If in the tree, reparent it
-	if player.is_inside_tree():
-		player.reparent(player_parent)
+func add_player_to_tree(player: Node, parent: Node = null):
+	# If a parent was defined, use that.
+	if parent is Node:
+		if player.is_inside_tree():
+			player.reparent(parent, false)
+		else:
+			parent.add_child(player)
+	
+	# If not, use the default parent.
 	else:
-		player_parent.add_child(player)
+		if player.is_inside_tree():
+			player.reparent(player_parent, false)
+		else:
+			player_parent.add_child(player)
 
 
 func remove_player_from_tree(player: Node):
@@ -215,14 +207,6 @@ func get_available_channel(type: CHANNEL_TYPE, allow_new: bool = true) -> Node:
 			if allow_new:
 				return add_channel(CHANNEL_TYPE.POSITIONAL_2D)
 
-		CHANNEL_TYPE.POSITIONAL_3D:
-			for player in channels_3D:
-				if not player.playing:
-					return player
-
-			if allow_new:
-				return add_channel(CHANNEL_TYPE.POSITIONAL_3D)
-
 	GodotLogger.error("Something went wrong when trying to add a channel.")
 	return null
 
@@ -240,8 +224,8 @@ func play_sound_mono(
 
 	if player == null:
 		return null
-
-	add_player_to_tree(player)
+	
+	add_player_to_tree(player, settings.custom_parent)
 
 	player.stream = stream
 	player.bus = settings.bus
@@ -249,7 +233,7 @@ func play_sound_mono(
 	player.volume_db = settings.volume
 	player.play(settings.seek)
 
-	player.finished.connect(on_player_finished.bind(player, settings))
+	player.finished.connect(on_player_finished.bind(player, settings), CONNECT_ONE_SHOT)
 
 	if settings.identifier != "":
 		registered_players[settings.identifier] = player
@@ -270,7 +254,7 @@ func play_sound_pos_2d(
 	if player == null:
 		return null
 
-	add_player_to_tree(player)
+	add_player_to_tree(player, settings.custom_parent)
 
 	player.stream = stream
 	player.bus = settings.bus
@@ -278,42 +262,16 @@ func play_sound_pos_2d(
 	player.volume_db = settings.volume
 	player.attenuation = settings.attenuation
 	player.max_distance = settings.max_distance
-	player.global_position = settings.position_2d
+	
+	if settings.position_2d_global != Vector2.INF:
+		player.global_position = settings.position_2d_global
+		
+	if settings.position_2d_local != Vector2.INF:
+		player.position = settings.position_2d_local
+		
 	player.play(settings.seek)
 
-	player.finished.connect(on_player_finished.bind(player, settings))
-
-	if settings.identifier != "":
-		registered_players[settings.identifier] = player
-
-	return player
-
-
-func play_sound_pos_3d_by_class(stream_class: String, settings: StreamPlayerSettings):
-	play_sound_pos_3d(get_registered_stream(stream_class), settings)
-
-
-func play_sound_pos_3d(
-	stream: AudioStream,
-	settings: StreamPlayerSettings = StreamPlayerSettings.new()
-) -> AudioStreamPlayer3D:
-	var player: AudioStreamPlayer3D = get_available_channel(CHANNEL_TYPE.POSITIONAL_3D)
-
-	if player == null:
-		return null
-
-	add_player_to_tree(player)
-
-	player.stream = stream
-	player.bus = settings.bus
-	player.pitch_scale = settings.pitch_scale
-	player.volume_db = settings.volume
-	player.attenuation = settings.attenuation
-	player.max_distance = settings.max_distance
-	player.global_position = settings.position_3d
-	player.play(settings.seek)
-
-	player.finished.connect(on_player_finished.bind(player, settings))
+	player.finished.connect(on_player_finished.bind(player, settings), CONNECT_ONE_SHOT)
 
 	if settings.identifier != "":
 		registered_players[settings.identifier] = player
@@ -326,7 +284,6 @@ func on_player_finished(player: Node, settings: StreamPlayerSettings):
 		(
 			player is AudioStreamPlayer
 			or player is AudioStreamPlayer2D
-			or player is AudioStreamPlayer3D
 		)
 	)
 	if settings.loop:
@@ -348,15 +305,15 @@ func sync_play_on_client(id: int, stream_class: String, type: CHANNEL_TYPE, json
 class StreamPlayerSettings:
 	extends Object
 
-	const JSON_Keys: Array[String] = ["position_2d", "position_3d", "bus", "seek", "volume", "pitch_scale", "attenuation", "max_distance", "loop", "identifier"]
+	const JSON_Keys: Array[String] = ["position_2d", "bus", "seek", "volume", "pitch_scale", "attenuation", "max_distance", "loop", "identifier"]
 
 	var identifier: String
 
 	## Position for 2D players, in global coordinates
-	var position_2d: Vector2
-
-	## Position for 3D players, in global coordinates
-	var position_3d: Vector3
+	var position_2d_global: Vector2 = Vector2.INF
+	
+	## Position for 2D players, in local coordinates
+	var position_2d_local: Vector2 = Vector2.INF
 
 	## The Audio bus used, falls back to Master if invalid
 	var bus: StringName = &"Master"
@@ -370,7 +327,7 @@ class StreamPlayerSettings:
 	## Multiplier for pitch
 	var pitch_scale: float = 1.0
 
-	## Exponent that changes how much the sound fades over distance, 2D/3D only.
+	## Exponent that changes how much the sound fades over distance, 2D only.
 	var attenuation: float = 1.0
 
 	## After this distance, the sound cannot be heard at all
@@ -378,19 +335,22 @@ class StreamPlayerSettings:
 
 	## If true, the sound will start playing again upon finishing, respects the "seek" property
 	var loop: bool = false
+	
+	## If not null, it overrides the parent of the player
+	var custom_parent: Node = null
 
-	func set_identifier(ident: String):
+	func set_identifier(ident: String) -> StreamPlayerSettings:
 		identifier = ident
 		return self
 
-	func set_position_2d(value: Vector2):
-		position_2d = value
+	func set_position_2d_local(value: Vector2) -> StreamPlayerSettings:
+		position_2d_local = value
 		return self
 
-	func set_position_3d(value: Vector3):
-		position_3d = value
+	func set_position_2d_global(value: Vector2) -> StreamPlayerSettings:
+		position_2d_global = value
 		return self
-
+		
 	func set_bus(value: StringName) -> StreamPlayerSettings:
 		bus = value
 		return self
@@ -417,6 +377,10 @@ class StreamPlayerSettings:
 
 	func set_loop(value: bool) -> StreamPlayerSettings:
 		loop = value
+		return self
+		
+	func set_custom_parent(node: Node) -> StreamPlayerSettings:
+		custom_parent = node
 		return self
 
 	func to_json() -> Dictionary:

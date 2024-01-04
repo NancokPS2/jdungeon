@@ -3,6 +3,7 @@ extends Resource
 class_name SkillComponentResource
 
 const FAILSAFE_TEXTURE: Texture = preload("res://icon.svg")
+const FAILSAFE_STREAM: String = "CreatureScreech"
 const ENTITY_TYPES := J.ENTITY_TYPE
 
 @export var skill_class: String
@@ -12,6 +13,8 @@ const ENTITY_TYPES := J.ENTITY_TYPE
 @export var energy_usage: int = 0
 
 @export_file("*.jpg *.png *.svg") var icon_path: String = "res://icon.svg"
+
+@export_file("*.wav *.ogg") var sfx_stream_class: String = FAILSAFE_STREAM
 
 @export_flags_2d_physics var collision_mask: int = (
 	J.PHYSICS_LAYER_PLAYERS + J.PHYSICS_LAYER_ENEMIES + J.PHYSICS_LAYER_NPCS + J.PHYSICS_LAYER_ITEMS
@@ -47,7 +50,7 @@ const ENTITY_TYPES := J.ENTITY_TYPE
 func effect(information: SkillUseInfo):
 	#Filter targets to make sure they are valid ones
 	var filteredTargets: Array[Node] = []
-	for target in information.targets:
+	for target: Node in information.targets:
 		if target.get("entity_type") is int and target.get("entity_type") in valid_entities:
 			filteredTargets.append(target)
 
@@ -55,7 +58,7 @@ func effect(information: SkillUseInfo):
 			break
 
 	information.targets = filteredTargets
-
+	
 	_effect(information)
 
 
@@ -84,3 +87,5 @@ func get_icon() -> Texture:
 		return tex
 	else:
 		return FAILSAFE_TEXTURE
+		
+	

@@ -605,5 +605,6 @@ func soundmanager_sync_invoke_audio(c: String, t:SoundManager.CHANNEL_TYPE, s: D
 	var settings := SoundManager.new_settings().from_json(s)
 	
 	SoundManager.main_instance.play_sound_by_class(c, t, settings)
+	
 	if Global.debug_mode:
-		GodotLogger.info("Played sound {0} at {1}".format([c, s.get("position_2d", Vector2.INF)]))
+		GodotLogger.info("Played sound {0} at {1}".format([c, str(s)]))
