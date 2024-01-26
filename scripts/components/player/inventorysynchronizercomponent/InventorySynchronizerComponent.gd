@@ -65,12 +65,11 @@ func _ready():
 ## Tries to merge an item into the inventory. Items from the same class get stacked togheter.
 ## Returns a bool depending on wether it is successful or not.
 func add_item(item: Item) -> bool:
-	assert(G.is_server())
 	if Global.debug_mode:
 		GodotLogger.info("Adding item '{1}' to player '{0}'.".format([target_node.get_name(), str(item.name)]))
 	
 	#If it is currency, add its amount as gold.
-	if item.item_type == Item.ITEM_TYPE.CURRENCY:
+	if item.item_type == Item.ITEM_TYPE.CURRENCY and G.is_server():
 		change_gold(item.amount)
 		if Global.debug_mode:
 			GodotLogger.info("Adding {1} gold to player '{0}'.".format([target_node.get_name(), str(item.amount)]))		
@@ -101,15 +100,12 @@ func add_item(item: Item) -> bool:
 
 		# Set the amount it should have
 		if Global.debug_mode:
-			GodotLogger.info("Stacking item '{0}' of {1} amount to player '{0}'.".format([str(item.name), str(amount_to_add)]))
+			GodotLogger.info("Stacking item '{0}' with {1} amount to player '{0}'.".format([str(item.name), str(amount_to_add)]))
 			
 		existing_item.amount += amount_to_add
 		
 		assert(item.get_parent() == null, "The item should be an orphan by now.")
 		item_added.emit(item.uuid, item.item_class)
-		
-		if G.is_server():
-			sync_item_response.rpc_id( target_node.peer_id, existing_item.to_json() )
 		
 		# If anything's left, add it as another item.
 		if amount_overflow > 0:
@@ -126,10 +122,11 @@ func add_item(item: Item) -> bool:
 		item_added.emit(item.uuid, item.item_class)
 		assert(item.amount > 0)
 		
-		if G.is_server():
-			sync_item_response.rpc_id(target_node.peer_id, item.to_json())
+	if G.is_server():
+		sync_add_item_response.rpc_id(target_node.peer_id, item.to_json())
 	
-	item.amount_changed.connect(on_item_amount_changed)
+	if not item.amount_changed.is_connected(on_item_amount_changed):
+		item.amount_changed.connect(on_item_amount_changed)
 	
 	#Failsafe
 	if not get_item_by_class(item.item_class):
@@ -139,25 +136,26 @@ func add_item(item: Item) -> bool:
 
 
 func remove_item(item_uuid: String) -> Item:
-	
 	var item: Item = get_item(item_uuid)
 	
-	if item != null:
-		items.erase(item)
-		
-		if item.amount_changed.is_connected(on_item_amount_changed):
-			item.amount_changed.disconnect(on_item_amount_changed)
-		
-		if G.is_server():
-			sync_item.rpc_id(target_node.peer_id, item_uuid, 0)
-	else:
+	if not item is Item:
 		GodotLogger.warn("The item could not be found in '{0}' this inventory.".format([target_node.get_name()]))
+		return null
+	
+	items.erase(item)
+	
+	if item.amount_changed.is_connected(on_item_amount_changed):
+		item.amount_changed.disconnect(on_item_amount_changed)
+	else:
+		GodotLogger.warn("Item with uuid '{0}' was not connected?".format([item_uuid]))
+	
+	if G.is_server():
+		sync_remove_item_response.rpc_id(target_node.peer_id, item_uuid)
 			
 	return item
 	
 
-
-func get_item(item_uuid: String) -> Item:
+func get_item(item_uuid: String, ignore_errors: bool = false) -> Item:
 	for item: Item in items:
 		if item.uuid == item_uuid:
 			return item
@@ -210,7 +208,7 @@ func use_item(item_uuid: String, amount: int = 1) -> bool:
 			break
 			
 	if items_used > 0:
-		sync_item_response.rpc_id( target_node.peer_id, item.to_json() )
+		sync_add_item_response.rpc_id( target_node.peer_id, item.to_json() )
 
 	return true
 
@@ -314,32 +312,17 @@ func sync_inventory_response(inventory: Dictionary):
 	from_json(inventory)
 
 
-@rpc("call_remote", "any_peer", "reliable")
-func sync_item(item_uuid: String):
-	assert(G.is_server())
-	
-	var id: int = multiplayer.get_remote_sender_id()
-	
-	# Only allow logged in players
-	if not G.is_user_logged_in(id):
-		return
-	
-	var item: Item = get_item(item_uuid)
-	
-	if not item is Item:
-		GodotLogger.warn("There's no item with uuid '{0}' in this inventory, cannot sync.".format([item_uuid]))
-		return
-		
-	if id == target_node.peer_id:
-		sync_item_response.rpc_id(id, item.to_json())
-	else:
-		GodotLogger.warn("A sync attempt came from a different peer than the one that owns this entity. Owned by: {0} | Called by: {1}".format([str(target_node.peer_id), id]))
+@rpc("call_remote","authority","reliable")
+func sync_add_item_response(item_dict: Dictionary):
+	assert(not G.is_server())
+	add_item(Item.instance_from_json(item_dict))
 
 
 @rpc("call_remote","authority","reliable")
-func sync_item_response(item_dict: Dictionary):
-	item_from_json(item_dict)
-
+func sync_remove_item_response(item_uuid: String, amount: int):
+	assert(not G.is_server())
+	remove_item(item_uuid)
+	
 
 @rpc("call_remote","any_peer","reliable")
 func sync_use_item(item_uuid: String, amount: int):
@@ -358,6 +341,7 @@ func sync_use_item(item_uuid: String, amount: int):
 		return
 	
 	use_item(item_uuid, amount)
+
 
 
 @rpc("call_remote","any_peer","reliable")
@@ -425,7 +409,7 @@ func on_item_amount_changed(item: Item, new_amount: int):
 		remove_item(item.uuid)
 	
 	if G.is_server():
-		sync_item_response.rpc_id( target_node.peer_id, item.to_json() )
+		sync_add_item_response.rpc_id( target_node.peer_id, item.to_json() )
 	
 	item_amount_changed.emit(item.uuid, item.item_class, item.amount)
 	
